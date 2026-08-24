@@ -157,7 +157,7 @@ const finishSession = async () => {
          }
       }
 
-      // 3. Zapis metadanych sesji w Firestore (wraz z rozbudowanymi danymi z AI!)
+     // 3. Zapis metadanych sesji w Firestore (wraz z rozbudowanymi danymi z AI!)
       await setDoc(doc(db, 'vehicles', resolvedParams.vehicleId), {
         dealerId: dealerId,
         vin: aiExtractedData.vin,
@@ -168,6 +168,15 @@ const finishSession = async () => {
         photos: uploadedUrls,
         completedAt: serverTimestamp()
       }, { merge: true });
+
+      setIsSuccess(true);
+    } catch (error) {
+      console.error("Błąd podczas wysyłania danych:", error);
+      alert("Wystąpił błąd podczas wysyłania sesji.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   // ---------------- WIDOKI KONTROLNE ---------------- //
 
@@ -319,6 +328,6 @@ const finishSession = async () => {
           <ChevronRight className="w-6 h-6" />
         </button>
       </div>
-    </div>
+   </div>
   );
 }
