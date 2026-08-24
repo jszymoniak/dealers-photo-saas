@@ -289,33 +289,49 @@ let aiExtractedData = {
       />
       <canvas ref={canvasRef} className="hidden" />
 
-{/* Nałożony obrys samochodu lub dokumentu (Ghosting) */}
+      {/* Nałożony obrys samochodu lub dokumentu (Ghosting) */}
       <div className="absolute inset-0 pointer-events-none z-10 flex flex-col items-center justify-center">
         {STEPS[currentStep].id === 'registration_doc' ? (
-          <div className="w-4/5 max-w-sm h-64 border-4 border-blue-400 border-dashed rounded-xl bg-blue-400/10 flex items-center justify-center shadow-[0_0_20px_rgba(96,165,250,0.3)]">
-            <span className="text-blue-400 font-bold opacity-70 tracking-widest uppercase text-sm text-center px-4">Otwarty Dowód Rejestracyjny</span>
+          <div className="w-4/5 max-w-sm h-64 border-4 border-blue-400 border-dashed rounded-xl bg-blue-400/20 flex items-center justify-center shadow-[0_0_30px_rgba(96,165,250,0.4)] backdrop-blur-sm">
+            <span className="text-blue-300 font-black opacity-100 tracking-widest uppercase text-base text-center px-4 drop-shadow-md">Otwarty Dowód Rejestracyjny</span>
           </div>
-        ) : STEPS[currentStep].id.includes('ext_front_') || STEPS[currentStep].id.includes('ext_back_') ? (
-          // Obrysy dla skosów (3/4)
-          <div className="w-full h-full flex flex-col items-center justify-center p-8 opacity-60">
-             <div className="w-full h-48 border-x-4 border-t-4 border-emerald-400 border-dashed rounded-t-3xl"></div>
-             <div className="w-full h-24 border-x-4 border-b-4 border-emerald-400 border-dashed rounded-b-xl flex items-center justify-between px-8">
-                <div className="w-16 h-16 rounded-full border-4 border-emerald-400 border-dashed"></div>
-                <div className="w-16 h-16 rounded-full border-4 border-emerald-400 border-dashed"></div>
+        ) : STEPS[currentStep].id === 'ext_left' || STEPS[currentStep].id === 'ext_right' ? (
+          // BOKI - Dwa koła
+          <div className="w-full h-full flex flex-col items-center justify-center p-8 opacity-100">
+             <div className="w-full h-48 border-x-4 border-t-4 border-emerald-400 border-dashed rounded-t-3xl bg-emerald-400/10"></div>
+             <div className="w-full h-24 border-x-4 border-b-4 border-emerald-400 border-dashed rounded-b-xl flex items-center justify-between px-8 bg-emerald-400/10">
+                <div className="w-20 h-20 rounded-full border-4 border-emerald-400 border-dashed bg-black/60 backdrop-blur-sm flex items-center justify-center shadow-[0_0_15px_rgba(52,211,153,0.4)]">
+                  <span className="text-emerald-400 text-xs font-black tracking-widest uppercase">Koło</span>
+                </div>
+                <div className="w-20 h-20 rounded-full border-4 border-emerald-400 border-dashed bg-black/60 backdrop-blur-sm flex items-center justify-center shadow-[0_0_15px_rgba(52,211,153,0.4)]">
+                  <span className="text-emerald-400 text-xs font-black tracking-widest uppercase">Koło</span>
+                </div>
+             </div>
+          </div>
+        ) : STEPS[currentStep].id === 'ext_front' || STEPS[currentStep].id === 'ext_back' ? (
+          // PRZÓD / TYŁ - Tablica Rejestracyjna
+          <div className="w-full h-full flex items-center justify-center p-8 opacity-100">
+             <div className="w-full max-w-md h-64 border-4 border-emerald-400 border-dashed rounded-3xl flex items-end justify-center pb-6 bg-emerald-400/10">
+                <div className="px-6 py-3 border-4 border-emerald-400 bg-black/70 backdrop-blur-md rounded-lg text-emerald-400 text-sm font-black tracking-widest uppercase shadow-[0_0_15px_rgba(52,211,153,0.5)]">
+                  Tablica Rejestracyjna
+                </div>
              </div>
           </div>
         ) : STEPS[currentStep].id.includes('ext_') ? (
-          // Obrysy dla przodu, tyłu i płaskich boków
-          <div className="w-full h-full flex items-center justify-center p-8 opacity-60">
-             <div className="w-full max-w-md h-64 border-4 border-emerald-400 border-dashed rounded-3xl flex items-end justify-center pb-4">
-                <div className="w-32 h-10 border-4 border-emerald-400 border-dashed rounded text-emerald-400 text-[10px] font-bold flex items-center justify-center uppercase">Tablica / Zderzak</div>
+          // SKOSY (Diagonals) - Wymuszenie perspektywy
+          <div className="w-full h-full flex items-center justify-center p-8 opacity-100">
+             <div className="w-full max-w-md h-64 border-4 border-emerald-400 border-dashed rounded-3xl flex items-center justify-center bg-emerald-400/10">
+                <div className="px-6 py-3 border-2 border-emerald-400 bg-black/70 backdrop-blur-md rounded-lg text-emerald-400 text-sm font-black tracking-widest uppercase shadow-[0_0_15px_rgba(52,211,153,0.5)] text-center">
+                   Wykadruj<br/>Przód i Bok
+                </div>
              </div>
           </div>
         ) : (
-          // Elementy wnętrza / detale (bez obrysu, tylko ramka ostrości)
-          <div className="w-3/4 max-w-sm aspect-video border-2 border-emerald-400/50 rounded flex items-center justify-center">
-             <div className="w-8 h-8 border-t-2 border-l-2 border-emerald-400 absolute top-1/4 left-1/4"></div>
-             <div className="w-8 h-8 border-b-2 border-r-2 border-emerald-400 absolute bottom-1/4 right-1/4"></div>
+          // Elementy wnętrza / detale
+          <div className="w-3/4 max-w-sm aspect-video border-2 border-emerald-400/80 rounded flex flex-col items-center justify-center bg-emerald-400/10 backdrop-blur-sm shadow-[0_0_20px_rgba(52,211,153,0.2)]">
+             <div className="w-12 h-12 border-t-4 border-l-4 border-emerald-400 absolute top-1/4 left-1/4"></div>
+             <div className="w-12 h-12 border-b-4 border-r-4 border-emerald-400 absolute bottom-1/4 right-1/4"></div>
+             <span className="text-emerald-400 font-black uppercase tracking-widest text-sm bg-black/70 px-4 py-2 rounded-lg border border-emerald-400/50 mt-4">Wykadruj detal</span>
           </div>
         )}
       </div>
