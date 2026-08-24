@@ -9,6 +9,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import Link from 'next/link';
 
 const STEPS = [
+  { id: 'license_plate', name: 'Tablica rejestracyjna', hint: 'Wykadruj samą tablicę (do odczytu OCR)' },
   { id: 'front_left', name: 'Przód - Lewy skos (45°)', hint: 'Dopasuj reflektor i koło do obrysu' },
   { id: 'front_center', name: 'Przód - Centralnie', hint: 'Wyrównaj grill i tablicę w środku kadru' },
   // Tymczasowo 2 kroki. Docelowo będzie 8.
@@ -128,8 +129,8 @@ const finishSession = async () => {
         uploadedUrls[stepId] = downloadUrl;
       }
 
-      // 2. Szybka Analiza AI (bierzemy zdjęcie z widocznym przodem)
-      const firstImageBase64 = capturedImages['front_center'] || capturedImages['front_left'];
+// 2. Szybka Analiza AI (bierzemy dedykowane zdjęcie tablicy)
+      const firstImageBase64 = capturedImages['license_plate'] || capturedImages['front_center'];
       
       if (firstImageBase64) {
          try {
@@ -257,13 +258,21 @@ const finishSession = async () => {
       />
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Nałożony obrys samochodu (Ghosting) */}
+     {/* Nałożony obrys samochodu lub tablicy (Ghosting) */}
       <div className="absolute inset-0 pointer-events-none z-10 flex items-center justify-center">
-        <svg viewBox="0 0 800 400" className="w-full h-full max-h-[70vh] opacity-80" preserveAspectRatio="xMidYMid meet">
-          <path d="M 120 250 L 150 170 L 250 130 L 350 70 L 500 70 L 650 130 L 720 170 L 750 250 L 730 290 L 650 290 A 40 40 0 0 0 570 290 L 310 290 A 40 40 0 0 0 230 290 L 100 290 Z" fill="none" stroke="#34d399" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="270" cy="290" r="40" fill="none" stroke="#34d399" strokeWidth="6" />
-          <circle cx="610" cy="290" r="40" fill="none" stroke="#34d399" strokeWidth="6" />
-        </svg>
+        {STEPS[currentStep].id === 'license_plate' ? (
+          // Obrys dla tablicy rejestracyjnej
+          <div className="w-4/5 max-w-sm h-32 border-4 border-emerald-400 border-dashed rounded-xl bg-emerald-400/10 flex items-center justify-center shadow-[0_0_20px_rgba(52,211,153,0.3)]">
+            <span className="text-emerald-400 font-bold opacity-70 tracking-widest uppercase text-sm">Umieść tablicę tutaj</span>
+          </div>
+        ) : (
+          // Obrys dla całego samochodu
+          <svg viewBox="0 0 800 400" className="w-full h-full max-h-[70vh] opacity-80" preserveAspectRatio="xMidYMid meet">
+            <path d="M 120 250 L 150 170 L 250 130 L 350 70 L 500 70 L 650 130 L 720 170 L 750 250 L 730 290 L 650 290 A 40 40 0 0 0 570 290 L 310 290 A 40 40 0 0 0 230 290 L 100 290 Z" fill="none" stroke="#34d399" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="270" cy="290" r="40" fill="none" stroke="#34d399" strokeWidth="6" />
+            <circle cx="610" cy="290" r="40" fill="none" stroke="#34d399" strokeWidth="6" />
+          </svg>
+        )}
       </div>
 
       {/* Panel kontrolny aparatu na dole */}
