@@ -11,7 +11,7 @@ export async function POST(req: Request) {
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     // Używamy modelu flash, bo działa błyskawicznie i świetnie analizuje obrazy
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.7-flash' });
 
     // Usuwamy prefiks "data:image/jpeg;base64," z ciągu znaków
     const base64Data = imageBase64.split(',')[1] || imageBase64;
