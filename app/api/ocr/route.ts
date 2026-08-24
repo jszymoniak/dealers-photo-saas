@@ -15,14 +15,16 @@ export async function POST(req: Request) {
     const base64Data = imageBase64.split(',')[1] || imageBase64;
 
     // Nowy, zaawansowany prompt, wymuszający strukturę JSON
-    const prompt = `Przeanalizuj to zdjęcie. Może to być zdjęcie samochodu z tablicą rejestracyjną LUB zdjęcie otwartego polskiego dowodu rejestracyjnego.
+   const prompt = `Przeanalizuj to zdjęcie. Może to być zdjęcie samochodu z tablicą rejestracyjną LUB zdjęcie otwartego polskiego dowodu rejestracyjnego.
     
     Twoim zadaniem jest wyciągnięcie danych i zwrócenie ich w formacie JSON.
     Jeśli to dowód rejestracyjny, znajdź:
-    - Numer rejestracyjny
-    - Numer VIN (pozycja E w dowodzie)
-    - Markę pojazdu
-    - Model pojazdu
+    - Numer rejestracyjny (pozycja A)
+    - Numer VIN (pozycja E)
+    - Markę pojazdu (pozycja D.1)
+    - Model pojazdu (pozycja D.3)
+    - Datę pierwszej rejestracji (pozycja B)
+    - Datę wydania dowodu / rejestracji w PL (pozycja I)
     
     Jeśli to tylko zdjęcie tablicy, wypełnij tylko numer rejestracyjny.
     Zwróć TYLKO surowy JSON, bez znaczników markdown, według tego schematu:
@@ -30,7 +32,9 @@ export async function POST(req: Request) {
       "plate": "odczytany_numer_bez_spacji",
       "vin": "odczytany_vin",
       "brand": "marka",
-      "model": "model"
+      "model": "model",
+      "firstRegistration": "wartość_z_pola_B",
+      "currentRegistration": "wartość_z_pola_I"
     }
     Jeśli czegoś nie potrafisz odczytać, wstaw null.`;
 

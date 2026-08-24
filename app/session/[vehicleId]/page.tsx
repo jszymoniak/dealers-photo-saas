@@ -10,10 +10,19 @@ import Link from 'next/link';
 
 const STEPS = [
   { id: 'registration_doc', name: 'Dowód Rejestracyjny', hint: 'Zrób wyraźne zdjęcie otwartego dowodu (strony z kodem Aztec)' },
-  { id: 'license_plate', name: 'Tablica rejestracyjna', hint: 'Wykadruj samą tablicę (do odczytu OCR)' },
-  { id: 'front_left', name: 'Przód - Lewy skos (45°)', hint: 'Dopasuj reflektor i koło do obrysu' },
-  { id: 'front_center', name: 'Przód - Centralnie', hint: 'Wyrównaj grill i tablicę w środku kadru' },
-  // Tymczasowo 2 kroki. Docelowo będzie 8.
+  // Zewnętrzne 360°
+  { id: 'ext_front', name: 'Przód - Centralnie', hint: 'Wyrównaj grill w środku kadru' },
+  { id: 'ext_front_right', name: 'Przód - Prawy Skos', hint: 'Uchwyć przedni zderzak i prawy bok' },
+  { id: 'ext_right', name: 'Prawy Bok', hint: 'Sprofiluj auto wzdłuż linii bocznej' },
+  { id: 'ext_back_right', name: 'Tył - Prawy Skos', hint: 'Uchwyć tylny zderzak i prawy bok' },
+  { id: 'ext_back', name: 'Tył - Centralnie', hint: 'Wyrównaj klapę bagażnika w środku kadru' },
+  { id: 'ext_back_left', name: 'Tył - Lewy Skos', hint: 'Uchwyć tylny zderzak i lewy bok' },
+  { id: 'ext_left', name: 'Lewy Bok', hint: 'Sprofiluj auto wzdłuż linii bocznej' },
+  { id: 'ext_front_left', name: 'Przód - Lewy Skos', hint: 'Uchwyć przedni zderzak i lewy bok' },
+  // Detale wewnątrz/zewnątrz
+  { id: 'int_dashboard', name: 'Wnętrze - Deska rozdzielcza', hint: 'Zrób szerokie zdjęcie z tylnej kanapy' },
+  { id: 'trunk', name: 'Bagażnik', hint: 'Otwórz klapę i obejmij całą przestrzeń bagażową' },
+  { id: 'engine', name: 'Silnik', hint: 'Otwórz maskę i obejmij komorę silnika' },
 ];
 
 export default function PhotoSessionPage({ params }: { params: Promise<{ vehicleId: string }> }) {
@@ -130,10 +139,17 @@ const finishSession = async () => {
         uploadedUrls[stepId] = downloadUrl;
       }
 
-// 2. Szybka Analiza AI (Priorytet: Dowód, potem Tablica, potem Centralne)
-      const imageToAnalyze = capturedImages['registration_doc'] || capturedImages['license_plate'] || capturedImages['front_center'];
+// 2. Szybka Analiza AI (Priorytet: Dowód, potem Przód Centralnie)
+      const imageToAnalyze = capturedImages['registration_doc'] || capturedImages['ext_front'];
       
-      let aiExtractedData = { plate: 'Brak', vin: 'Brak', brand: 'Brak', model: 'Brak' };
+let aiExtractedData = { 
+        plate: 'Brak', 
+        vin: 'Brak', 
+        brand: 'Brak', 
+        model: 'Brak',
+        firstRegistration: 'Brak',
+        currentRegistration: 'Brak'
+      };
 
       if (imageToAnalyze) {
          try {
@@ -149,7 +165,9 @@ const finishSession = async () => {
                 plate: aiData.plate || 'Brak',
                 vin: aiData.vin || 'Brak',
                 brand: aiData.brand || 'Brak',
-                model: aiData.model || 'Brak'
+                model: aiData.model || 'Brak',
+                firstRegistration: aiData.firstRegistration || 'Brak',
+                currentRegistration: aiData.currentRegistration || 'Brak'
               };
             }
          } catch (aiErr) {
@@ -157,13 +175,15 @@ const finishSession = async () => {
          }
       }
 
-     // 3. Zapis metadanych sesji w Firestore (wraz z rozbudowanymi danymi z AI!)
+      // 3. Zapis metadanych sesji w Firestore (wraz z nowymi datami z dowodu!)
       await setDoc(doc(db, 'vehicles', resolvedParams.vehicleId), {
         dealerId: dealerId,
         vin: aiExtractedData.vin,
         plate: aiExtractedData.plate,
         brand: aiExtractedData.brand,
         model: aiExtractedData.model,
+        firstRegistrationDate: aiExtractedData.firstRegistration,
+        currentRegistrationDate: aiExtractedData.currentRegistration,
         status: 'Gotowe',
         photos: uploadedUrls,
         completedAt: serverTimestamp()
@@ -269,26 +289,34 @@ const finishSession = async () => {
       />
       <canvas ref={canvasRef} className="hidden" />
 
-     {/* Nałożony obrys samochodu lub dokumentu (Ghosting) */}
-      <div className="absolute inset-0 pointer-events-none z-10 flex items-center justify-center">
+{/* Nałożony obrys samochodu lub dokumentu (Ghosting) */}
+      <div className="absolute inset-0 pointer-events-none z-10 flex flex-col items-center justify-center">
         {STEPS[currentStep].id === 'registration_doc' ? (
-          // Obrys dla dowodu rejestracyjnego (pionowy lub poziomy kwadrat)
           <div className="w-4/5 max-w-sm h-64 border-4 border-blue-400 border-dashed rounded-xl bg-blue-400/10 flex items-center justify-center shadow-[0_0_20px_rgba(96,165,250,0.3)]">
             <span className="text-blue-400 font-bold opacity-70 tracking-widest uppercase text-sm text-center px-4">Otwarty Dowód Rejestracyjny</span>
           </div>
-        ) : STEPS[currentStep].id === 'license_plate' ? (
-          // Obrys dla tablicy rejestracyjnej
-          <div className="w-4/5 max-w-sm h-32 border-4 border-emerald-400 border-dashed rounded-xl bg-emerald-400/10 flex items-center justify-center shadow-[0_0_20px_rgba(52,211,153,0.3)]">
-            <span className="text-emerald-400 font-bold opacity-70 tracking-widest uppercase text-sm">Umieść tablicę tutaj</span>
+        ) : STEPS[currentStep].id.includes('ext_front_') || STEPS[currentStep].id.includes('ext_back_') ? (
+          // Obrysy dla skosów (3/4)
+          <div className="w-full h-full flex flex-col items-center justify-center p-8 opacity-60">
+             <div className="w-full h-48 border-x-4 border-t-4 border-emerald-400 border-dashed rounded-t-3xl"></div>
+             <div className="w-full h-24 border-x-4 border-b-4 border-emerald-400 border-dashed rounded-b-xl flex items-center justify-between px-8">
+                <div className="w-16 h-16 rounded-full border-4 border-emerald-400 border-dashed"></div>
+                <div className="w-16 h-16 rounded-full border-4 border-emerald-400 border-dashed"></div>
+             </div>
+          </div>
+        ) : STEPS[currentStep].id.includes('ext_') ? (
+          // Obrysy dla przodu, tyłu i płaskich boków
+          <div className="w-full h-full flex items-center justify-center p-8 opacity-60">
+             <div className="w-full max-w-md h-64 border-4 border-emerald-400 border-dashed rounded-3xl flex items-end justify-center pb-4">
+                <div className="w-32 h-10 border-4 border-emerald-400 border-dashed rounded text-emerald-400 text-[10px] font-bold flex items-center justify-center uppercase">Tablica / Zderzak</div>
+             </div>
           </div>
         ) : (
-          // Obrys dla całego samochodu
-          <svg viewBox="0 0 800 400" className="w-full h-full max-h-[70vh] opacity-80" preserveAspectRatio="xMidYMid meet">
-            {/* ... tutaj zostaje Twój stary kod rysujący autko SVG ... */}
-            <path d="M 120 250 L 150 170 L 250 130 L 350 70 L 500 70 L 650 130 L 720 170 L 750 250 L 730 290 L 650 290 A 40 40 0 0 0 570 290 L 310 290 A 40 40 0 0 0 230 290 L 100 290 Z" fill="none" stroke="#34d399" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-            <circle cx="270" cy="290" r="40" fill="none" stroke="#34d399" strokeWidth="6" />
-            <circle cx="610" cy="290" r="40" fill="none" stroke="#34d399" strokeWidth="6" />
-          </svg>
+          // Elementy wnętrza / detale (bez obrysu, tylko ramka ostrości)
+          <div className="w-3/4 max-w-sm aspect-video border-2 border-emerald-400/50 rounded flex items-center justify-center">
+             <div className="w-8 h-8 border-t-2 border-l-2 border-emerald-400 absolute top-1/4 left-1/4"></div>
+             <div className="w-8 h-8 border-b-2 border-r-2 border-emerald-400 absolute bottom-1/4 right-1/4"></div>
+          </div>
         )}
       </div>
 
