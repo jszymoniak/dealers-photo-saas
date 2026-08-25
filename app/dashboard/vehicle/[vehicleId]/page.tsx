@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, use, useRef, useCallback } from 'react';
+import { useState, useEffect, use, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL, deleteObject, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase';
-import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles, Trash2, Camera, CheckCircle2, Circle, Eye, X, MoveHorizontal, ImagePlus } from 'lucide-react';
+import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles, Trash2, Camera, CheckCircle2, Circle, X, ImagePlus, ZoomIn } from 'lucide-react';
 import Link from 'next/link';
 
 const PRESET_PROMPTS = [
@@ -14,14 +14,6 @@ const PRESET_PROMPTS = [
   { id: 'studio-dark', label: 'Ciemne Studio Premium', value: 'Ciemne ekskluzywne studio, czarna lśniąca podłoga, punktowe oświetlenie ledowe akcentujące sylwetkę, 8k resolution' },
   { id: 'outdoor-modern', label: 'Nowoczesny Podjazd', value: 'Nowoczesny dom jednorodzinny w tle, betonowy podjazd z płyt architektonicznych, słoneczny dzień, błękitne niebo' },
   { id: 'outdoor-industrial', label: 'Loft / Industrial', value: 'Wnętrze starego industrialnego magazynu, ściany z czerwonej cegły, wylany beton, ciepłe światło z dużych okien' }
-];
-
-const ROTATION_ORDER = ['ext_front', 'ext_front_right', 'ext_right', 'ext_back_right', 'ext_back', 'ext_back_left', 'ext_left', 'ext_front_left'];
-
-const BACKGROUNDS = [
-  { id: 'dark-studio', name: 'Ciemne Studio', css: 'bg-gradient-to-b from-slate-900 via-slate-950 to-black' },
-  { id: 'light-studio', name: 'Jasny Showroom', css: 'bg-gradient-to-b from-slate-100 via-white to-slate-200' },
-  { id: 'premium-gold', name: 'Premium Gold', css: 'bg-gradient-to-b from-slate-900 via-zinc-900 to-amber-950/40' },
 ];
 
 export default function VehicleDetailsPage({ params }: { params: Promise<{ vehicleId: string }> }) {
@@ -38,16 +30,12 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
   const [bgProgress, setBgProgress] = useState({ current: 0, total: 0, status: '' });
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   
-  // NOWE: Stany dla generatora AI
+  // Stany dla generatora AI
   const [bgPrompt, setBgPrompt] = useState(PRESET_PROMPTS[1].value);
   const [isGeneratingBg, setIsGeneratingBg] = useState(false);
-  
-  // Stany dla 360° i teł
-  const [show360, setShow360] = useState(false);
-  const [currentFrame, setCurrentFrame] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const [activeBg, setActiveBg] = useState(BACKGROUNDS[0]);
-  const dragStartX = useRef(0);
+
+  // Stan dla podglądu zdjęcia (Lightbox)
+  const [fullScreenImage, setFullScreenImage] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeStepToReplace, setActiveStepToReplace] = useState<string | null>(null);
@@ -149,32 +137,56 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
     } catch (error: any) { alert(`Błąd: ${error.message}`); } finally { setIsProcessingBg(false); }
   };
 
-  const available360Photos = ROTATION_ORDER.map(key => vehicle?.photos?.[key]).filter(Boolean);
-
-  const handlePointerDown = (e: React.PointerEvent) => {
-    setIsDragging(true);
-    dragStartX.current = e.clientX;
-  };
-
-  const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!isDragging || available360Photos.length === 0) return;
+  // --- NOWOŚĆ: Logika dla przycisku "Podstaw tło AI" ---
+const handleGenerateAIBg = async () => {
+    if (selectedPhotos.length === 0) return alert("Wybierz zdjęcia.");
     
-    const pixelsPerFrame = 40; 
-    const deltaX = e.clientX - dragStartX.current;
+    setIsGeneratingBg(true);
+    setBgProgress({ current: 0, total: selectedPhotos.length, status: 'Inicjalizacja AI...' });
     
-    if (Math.abs(deltaX) > pixelsPerFrame) {
-      const direction = deltaX > 0 ? -1 : 1; 
-      setCurrentFrame(prev => {
-        let next = prev + direction;
-        if (next >= available360Photos.length) next = 0;
-        if (next < 0) next = available360Photos.length - 1;
-        return next;
-      });
-      dragStartX.current = e.clientX; 
+    try {
+      const updatedPhotos = { ...vehicle.photos };
+      
+      for (let i = 0; i < selectedPhotos.length; i++) {
+        const key = selectedPhotos[i];
+        setBgProgress({ current: i + 1, total: selectedPhotos.length, status: `Generowanie tła AI: krok ${key.replace('ext_', '')}...` });
+        
+        // Uderzamy do naszego nowego endpointu
+        const res = await fetch('/api/generate-bg', { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify({ 
+            imageUrl: updatedPhotos[key], // Wysyłamy wycięte auto
+            prompt: bgPrompt              // Wysyłamy opis tła
+          }) 
+        });
+        
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) throw new Error(`Błąd serwera API (generate-bg).`);
+        
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error);
+        
+        setBgProgress({ current: i + 1, total: selectedPhotos.length, status: `Zapisywanie w chmurze...` });
+        
+        // Zapisujemy nowy obraz (JPG)
+        const storageRef = ref(storage, `${vehicle.dealerId}/vehicles/${resolvedParams.vehicleId}/processed/${key}_ai_${Date.now()}.jpg`);
+        await uploadString(storageRef, data.imageBase64, 'data_url');
+        updatedPhotos[key] = await getDownloadURL(storageRef);
+      }
+      
+      setBgProgress(prev => ({ ...prev, status: 'Aktualizacja...' }));
+      await updateDoc(doc(db, 'vehicles', resolvedParams.vehicleId), { photos: updatedPhotos });
+      setVehicle({ ...vehicle, photos: updatedPhotos });
+      setSelectedPhotos([]); 
+      alert("Nowe tło AI zostało wygenerowane!");
+      
+    } catch (error: any) { 
+      alert(`Błąd: ${error.message}`); 
+    } finally { 
+      setIsGeneratingBg(false); 
     }
-  }, [isDragging, available360Photos.length]);
-
-  const handlePointerUp = () => setIsDragging(false);
+  };
 
   if (isLoading) return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-emerald-400"><Loader2 className="w-10 h-10 animate-spin mb-4" /></div>;
   if (!vehicle) return <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center"><h1 className="text-2xl font-bold mb-4">Nie znaleziono pojazdu</h1><Link href="/dashboard" className="text-emerald-400">Wróć</Link></div>;
@@ -183,56 +195,24 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
     <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8">
       <input type="file" accept="image/*" capture="environment" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
 
-      {/* --- MODAL WIRTUALNEJ OBROTNICY 360 --- */}
-      {show360 && available360Photos.length > 0 && (
-        <div className="fixed inset-0 z-50 flex flex-col">
-          <div className={`absolute inset-0 transition-colors duration-700 ${activeBg.css}`}></div>
-
-          <div className="p-6 flex justify-between items-center z-10 relative">
-            <div>
-              <h2 className={`text-2xl font-bold flex items-center gap-2 ${activeBg.id === 'light-studio' ? 'text-slate-900' : 'text-white'}`}>
-                <Sparkles className="w-6 h-6 text-indigo-500" /> Studio 360°
-              </h2>
-              <p className={`text-sm ${activeBg.id === 'light-studio' ? 'text-slate-600' : 'text-slate-400'}`}>{vehicle.brand} {vehicle.model}</p>
-            </div>
-            
-            <div className="flex gap-2 bg-black/20 backdrop-blur-md p-1.5 rounded-xl border border-white/10 hidden md:flex">
-               {BACKGROUNDS.map(bg => (
-                 <button 
-                    key={bg.id} 
-                    onClick={() => setActiveBg(bg)}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${activeBg.id === bg.id ? 'bg-white/20 text-white shadow-md' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
-                 >
-                   {bg.name}
-                 </button>
-               ))}
-            </div>
-
-            <button onClick={() => setShow360(false)} className={`p-3 rounded-full transition-colors border ${activeBg.id === 'light-studio' ? 'bg-slate-200 border-slate-300 text-slate-800 hover:bg-slate-300' : 'bg-slate-800 border-slate-700 text-white hover:bg-slate-700'}`}>
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-
-          <div 
-            className="flex-1 relative overflow-hidden select-none touch-none flex items-center justify-center cursor-grab active:cursor-grabbing z-10"
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
-          >
-            <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-[20%] w-[80%] max-w-3xl h-32 blur-3xl rounded-[100%] pointer-events-none transition-colors duration-700 ${activeBg.id === 'light-studio' ? 'bg-black/20' : 'bg-black/60'}`}></div>
-
+      {/* --- NOWOŚĆ: Modal Lightbox (Podgląd Powiększenia) --- */}
+      {fullScreenImage && (
+        <div 
+          className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setFullScreenImage(null)}
+        >
+          <button className="absolute top-6 right-6 text-white/50 hover:text-white p-2 bg-black/50 rounded-full transition-colors">
+            <X className="w-8 h-8" />
+          </button>
+          {/* checkered-bg pod spodem by pokazywać przezroczystość PNG, jeśli jest wycięty */}
+          <div className="relative max-w-7xl max-h-[90vh] rounded-xl overflow-hidden shadow-2xl">
+            <style jsx>{`.checkered-bg { background-image: linear-gradient(45deg, #1e293b 25%, transparent 25%), linear-gradient(-45deg, #1e293b 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1e293b 75%), linear-gradient(-45deg, transparent 75%, #1e293b 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px;}`}</style>
+            <div className="absolute inset-0 checkered-bg -z-10"></div>
             <img 
-              src={available360Photos[currentFrame]} 
-              alt="Widok 360"
-              className="relative z-10 w-full max-w-5xl max-h-[70vh] object-contain pointer-events-none drop-shadow-2xl"
-              draggable="false"
+              src={fullScreenImage} 
+              className="max-w-full max-h-[90vh] object-contain" 
+              alt="Powiększenie" 
             />
-
-            <div className={`absolute bottom-12 left-1/2 -translate-x-1/2 flex flex-col items-center animate-pulse opacity-50 pointer-events-none ${activeBg.id === 'light-studio' ? 'text-slate-800' : 'text-white'}`}>
-              <MoveHorizontal className="w-8 h-8 mb-2" />
-              <span className="text-sm font-bold tracking-widest uppercase">Przesuń, aby obrócić</span>
-            </div>
           </div>
         </div>
       )}
@@ -246,19 +226,16 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
           </div>
           
           <div className="flex flex-wrap gap-2 md:gap-3 w-full xl:w-auto">
-            <button onClick={() => setShow360(true)} disabled={available360Photos.length === 0} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(79,70,229,0.4)]">
-              <Eye className="w-4 h-4" /> Podgląd 360°
-            </button>
             <Link href={`/session/${resolvedParams.vehicleId}`} className="px-4 py-2 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all"><Camera className="w-4 h-4" /> Aparat</Link>
             <button onClick={handleRemoveBackgrounds} disabled={isProcessingBg || selectedPhotos.length === 0} className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${selectedPhotos.length > 0 ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-slate-800 text-slate-500'}`}>
-              {isProcessingBg ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Usuń tło ({selectedPhotos.length})
+              {isProcessingBg ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Usuń stare tło ({selectedPhotos.length})
             </button>
             {isEditing ? (
               <button onClick={handleSave} disabled={isSaving} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all disabled:opacity-50"><Save className="w-4 h-4" /> Zapisz</button>
             ) : (
               <button onClick={() => setIsEditing(true)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all border border-slate-700"><Edit2 className="w-4 h-4" /> Edytuj</button>
             )}
-            <button onClick={handleDeleteKartoteka} disabled={isSaving} className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all disabled:opacity-50 ml-auto xl:ml-2"><Trash2 className="w-4 h-4" /> Usuń</button>
+            <button onClick={handleDeleteKartoteka} disabled={isSaving} className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all disabled:opacity-50 ml-auto xl:ml-2"><Trash2 className="w-4 h-4" /> Usuń całą kartotekę</button>
           </div>
         </div>
 
@@ -266,7 +243,7 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
           <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center">
             <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl max-w-md w-full text-center shadow-2xl">
               <Sparkles className="w-12 h-12 text-indigo-500 animate-pulse mx-auto mb-4" />
-              <h3 className="text-xl font-bold text-white mb-2">Tworzenie Wirtualnego Studia</h3>
+              <h3 className="text-xl font-bold text-white mb-2">Przetwarzanie Zdjęć...</h3>
               <div className="w-full bg-slate-800 rounded-full h-3 my-4 overflow-hidden"><div className="bg-indigo-500 h-3 rounded-full transition-all duration-300" style={{ width: `${(bgProgress.current / bgProgress.total) * 100}%` }}/></div>
               <p className="text-xs text-indigo-400 font-mono">{bgProgress.status}</p>
             </div>
@@ -285,7 +262,6 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
           </div>
 
           <div className="lg:col-span-2 bg-slate-900 p-6 rounded-2xl border border-slate-800">
-            {/* ZMODYFIKOWANY NAGŁÓWEK GALERII */}
             <div className="flex flex-col mb-6 gap-4 border-b border-slate-800 pb-5">
               <div className="flex justify-between items-start">
                 <div>
@@ -323,7 +299,9 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
                     className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:border-indigo-500 outline-none w-full flex-1"
                   />
                   
+                  {/* PRZYCISK OŻYWIONY */}
                   <button 
+                    onClick={handleGenerateAIBg}
                     disabled={selectedPhotos.length === 0 || isGeneratingBg}
                     className={`px-5 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all whitespace-nowrap ${selectedPhotos.length > 0 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)]' : 'bg-slate-800 text-slate-500'}`}
                   >
@@ -343,14 +321,27 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
                   return (
                     <div key={stepId} className={`group relative aspect-video bg-slate-950 rounded-xl overflow-hidden border-2 flex items-center justify-center checkered-bg ${isSelected ? 'border-indigo-500' : 'border-slate-800 hover:border-slate-600'}`}>
                       <style jsx>{`.checkered-bg { background-image: linear-gradient(45deg, #1e293b 25%, transparent 25%), linear-gradient(-45deg, #1e293b 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1e293b 75%), linear-gradient(-45deg, transparent 75%, #1e293b 75%); background-size: 20px 20px; background-position: 0 0, 0 10px, 10px -10px, -10px 0px;}`}</style>
-                      {isLoading ? <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" /> : <img src={url as string} alt={stepId} className="max-w-full max-h-full object-contain" />}
+                      
+                      {isLoading ? (
+                        <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
+                      ) : (
+                        // DODANY KURSOR I ONCLICK DO POWIĘKSZANIA
+                        <img 
+                          src={url as string} 
+                          alt={stepId} 
+                          className="max-w-full max-h-full object-contain cursor-zoom-in transition-transform duration-300 hover:scale-105" 
+                          onClick={() => setFullScreenImage(url as string)}
+                        />
+                      )}
+                      
                       {!isLoading && (
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity p-2 flex flex-col justify-between">
-                          <div className="flex justify-between items-start">
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity p-2 flex flex-col justify-between pointer-events-none">
+                          <div className="flex justify-between items-start pointer-events-auto">
                             <button onClick={() => togglePhotoSelection(stepId)} className="text-white p-1 hover:text-indigo-400">{isSelected ? <CheckCircle2 className="w-7 h-7 text-indigo-500 fill-white" /> : <Circle className="w-7 h-7" />}</button>
                             <div className="flex gap-2 bg-black/60 rounded-lg p-1 border border-white/10">
-                              <button onClick={() => initReplacePhoto(stepId)} className="p-1.5 text-slate-300 hover:text-emerald-400"><Camera className="w-5 h-5" /></button>
-                              <button onClick={() => handleDeletePhoto(stepId, url as string)} className="p-1.5 text-slate-300 hover:text-rose-400"><Trash2 className="w-5 h-5" /></button>
+                              <button onClick={() => setFullScreenImage(url as string)} className="p-1.5 text-slate-300 hover:text-blue-400" title="Powiększ"><ZoomIn className="w-5 h-5" /></button>
+                              <button onClick={() => initReplacePhoto(stepId)} className="p-1.5 text-slate-300 hover:text-emerald-400" title="Podmień z aparatu"><Camera className="w-5 h-5" /></button>
+                              <button onClick={() => handleDeletePhoto(stepId, url as string)} className="p-1.5 text-slate-300 hover:text-rose-400" title="Usuń zdjęcie"><Trash2 className="w-5 h-5" /></button>
                             </div>
                           </div>
                           <div className="flex justify-center"><span className="text-white text-xs font-bold uppercase bg-black/70 px-3 py-1 rounded-md">{stepId.replace('ext_', '').replace('_', ' ')}</span></div>
