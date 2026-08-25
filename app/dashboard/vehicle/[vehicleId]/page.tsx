@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect, use, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { ref, uploadString, getDownloadURL, deleteObject, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase';
-import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles, Trash2, Camera, CheckCircle2, Circle } from 'lucide-react';
 import Link from 'next/link';
 
 export default function VehicleDetailsPage({ params }: { params: Promise<{ vehicleId: string }> }) {
@@ -25,9 +25,12 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
   });
   const [isSaving, setIsSaving] = useState(false);
   
-  // Stany do usuwania tła
   const [isProcessingBg, setIsProcessingBg] = useState(false);
   const [bgProgress, setBgProgress] = useState({ current: 0, total: 0, status: '' });
+  const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeStepToReplace, setActiveStepToReplace] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchVehicle = async () => {
@@ -83,30 +86,124 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Funkcja czyszcząca tło z 8 zdjęć zewnętrznych
-  const handleRemoveBackgrounds = async () => {
-    if (!vehicle || !vehicle.photos) return;
+  const togglePhotoSelection = (stepId: string) => {
+    setSelectedPhotos(prev => 
+      prev.includes(stepId) ? prev.filter(id => id !== stepId) : [...prev, stepId]
+    );
+  };
 
-    // Filtrujemy tylko zdjęcia z zewnątrz (ext_)
-    const extKeys = Object.keys(vehicle.photos).filter(key => key.startsWith('ext_'));
-    if (extKeys.length === 0) {
-      alert("Brak zdjęć zewnętrznych do przetworzenia.");
+  const handleDeletePhoto = async (stepId: string, url: string) => {
+    if (!confirm('Czy na pewno chcesz usunąć to zdjęcie?')) return;
+    
+    try {
+      try {
+        const storageRef = ref(storage, url);
+        await deleteObject(storageRef);
+      } catch (e) {
+        console.warn("Plik mógł już zostać usunięty ze Storage.");
+      }
+
+      const updatedPhotos = { ...vehicle.photos };
+      delete updatedPhotos[stepId];
+      
+      await updateDoc(doc(db, 'vehicles', resolvedParams.vehicleId), { photos: updatedPhotos });
+      setVehicle({ ...vehicle, photos: updatedPhotos });
+      setSelectedPhotos(prev => prev.filter(id => id !== stepId)); 
+      
+    } catch (error) {
+      console.error("Błąd usuwania:", error);
+      alert("Nie udało się usunąć zdjęcia.");
+    }
+  };
+
+  // --- TRWAŁE USUWANIE CAŁEJ KARTOTEKI ---
+  const handleDeleteKartoteka = async () => {
+    if (!confirm('UWAGA! Czy na pewno chcesz usunąć tę kartotekę i WSZYSTKIE przypisane do niej zdjęcia z serwera? Tej operacji nie można cofnąć.')) return;
+
+    setIsSaving(true); // Używamy stanu zapisywania do zablokowania UI
+    try {
+      // Najpierw sprzątamy chmurę (Firebase Storage)
+      if (vehicle.photos) {
+        for (const url of Object.values(vehicle.photos)) {
+          if (url !== 'loading') {
+            try {
+              const storageRef = ref(storage, url as string);
+              await deleteObject(storageRef);
+            } catch (e) {
+              console.warn("Nie można usunąć pliku ze Storage:", url);
+            }
+          }
+        }
+      }
+
+      // Potem usuwamy rekord z bazy danych
+      await deleteDoc(doc(db, 'vehicles', resolvedParams.vehicleId));
+      
+      // I wykopujemy użytkownika z powrotem do listy
+      router.push('/dashboard');
+    } catch (error) {
+      console.error("Błąd usuwania całej kartoteki:", error);
+      alert("Wystąpił błąd podczas usuwania. Sprawdź konsolę.");
+      setIsSaving(false);
+    }
+  };
+
+  const initReplacePhoto = (stepId: string) => {
+    setActiveStepToReplace(stepId);
+    if (fileInputRef.current) {
+      fileInputRef.current.click(); 
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeStepToReplace || !vehicle.dealerId) return;
+
+    const originalUrl = vehicle.photos?.[activeStepToReplace];
+    const updatedPhotos = { ...(vehicle.photos || {}) };
+    setVehicle({ ...vehicle, photos: { ...updatedPhotos, [activeStepToReplace]: 'loading' }});
+
+    try {
+      const imagePath = `${vehicle.dealerId}/vehicles/${resolvedParams.vehicleId}/raw/${activeStepToReplace}_replaced_${Date.now()}.jpg`;
+      const storageRef = ref(storage, imagePath);
+      
+      await uploadBytes(storageRef, file);
+      const newUrl = await getDownloadURL(storageRef);
+      
+      updatedPhotos[activeStepToReplace] = newUrl;
+      await updateDoc(doc(db, 'vehicles', resolvedParams.vehicleId), { photos: updatedPhotos });
+      setVehicle({ ...vehicle, photos: updatedPhotos });
+      
+    } catch (error) {
+      console.error("Błąd wgrywania pliku:", error);
+      alert("Wystąpił błąd podczas podmiany zdjęcia.");
+      if (originalUrl) {
+         setVehicle({ ...vehicle, photos: { ...updatedPhotos, [activeStepToReplace]: originalUrl }}); 
+      }
+    } finally {
+      setActiveStepToReplace(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveBackgrounds = async () => {
+    if (selectedPhotos.length === 0) {
+      alert("Wybierz najpierw zdjęcia (klikając w kółko), z których chcesz usunąć tło.");
       return;
     }
 
     setIsProcessingBg(true);
-    setBgProgress({ current: 0, total: extKeys.length, status: 'Inicjalizacja...' });
+    setBgProgress({ current: 0, total: selectedPhotos.length, status: 'Inicjalizacja...' });
 
     try {
       const updatedPhotos = { ...vehicle.photos };
 
-      for (let i = 0; i < extKeys.length; i++) {
-        const key = extKeys[i];
+      for (let i = 0; i < selectedPhotos.length; i++) {
+        const key = selectedPhotos[i];
         const oldUrl = updatedPhotos[key];
         
-        setBgProgress({ current: i + 1, total: extKeys.length, status: `Wycinanie tła: krok ${key.replace('ext_', '')}...` });
+        setBgProgress({ current: i + 1, total: selectedPhotos.length, status: `Wycinanie tła: krok ${key.replace('ext_', '')}...` });
 
-        // 1. Wysłanie starego zdjęcia do API remove.bg
         const res = await fetch('/api/remove-bg', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -116,30 +213,26 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
         const data = await res.json();
         
         if (data.success && data.imageBase64) {
-          setBgProgress({ current: i + 1, total: extKeys.length, status: `Zapisywanie w chmurze...` });
+          setBgProgress({ current: i + 1, total: selectedPhotos.length, status: `Zapisywanie w chmurze...` });
           
-          // 2. Zapisanie nowego pliku PNG w Firebase Storage (folder /processed)
-          const imagePath = `${vehicle.dealerId}/vehicles/${resolvedParams.vehicleId}/processed/${key}.png`;
+          const imagePath = `${vehicle.dealerId}/vehicles/${resolvedParams.vehicleId}/processed/${key}_${Date.now()}.png`;
           const storageRef = ref(storage, imagePath);
           
           await uploadString(storageRef, data.imageBase64, 'data_url');
           const newUrl = await getDownloadURL(storageRef);
           
-          // 3. Zastąpienie starego URL nowym (bez tła)
           updatedPhotos[key] = newUrl;
-        } else {
-          console.error(`Błąd wycinania tła dla ${key}:`, data.error);
         }
       }
 
       setBgProgress(prev => ({ ...prev, status: 'Aktualizacja bazy danych...' }));
 
-      // 4. Aktualizacja bazy Firestore nowymi linkami
       const docRef = doc(db, 'vehicles', resolvedParams.vehicleId);
       await updateDoc(docRef, { photos: updatedPhotos });
       
       setVehicle({ ...vehicle, photos: updatedPhotos });
-      alert("Tło zostało pomyślnie wycięte ze zdjęć zewnętrznych!");
+      setSelectedPhotos([]); 
+      alert("Tło zostało pomyślnie wycięte z wybranych zdjęć!");
 
     } catch (error) {
       console.error("Błąd podczas przetwarzania:", error);
@@ -171,10 +264,20 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 md:p-8">
+      
+      <input 
+        type="file" 
+        accept="image/*" 
+        capture="environment" 
+        ref={fileInputRef} 
+        onChange={handleFileChange} 
+        className="hidden" 
+      />
+
       <div className="max-w-5xl mx-auto space-y-6">
         
         {/* Nagłówek i przyciski akcji */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
           <div>
             <Link href="/dashboard" className="text-slate-400 hover:text-emerald-400 mb-2 inline-flex items-center gap-2 text-sm transition-colors">
               <ArrowLeft className="w-4 h-4" /> Wróć do listy
@@ -186,22 +289,31 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
             <p className="text-slate-500 text-sm mt-1">ID Sesji: {resolvedParams.vehicleId}</p>
           </div>
           
-          <div className="flex flex-wrap gap-3">
-            {/* Przycisk usuwania tła */}
+          {/* NOWY PASEK NARZĘDZI (ACTION BAR) */}
+          <div className="flex flex-wrap gap-2 md:gap-3 w-full xl:w-auto">
+            
+            {/* Przycisk Uruchom Aparat dla tego auta */}
+            <Link 
+              href={`/session/${resolvedParams.vehicleId}`}
+              className="px-4 py-2 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all"
+            >
+              <Camera className="w-4 h-4" /> Aparat
+            </Link>
+
             <button 
               onClick={handleRemoveBackgrounds} 
-              disabled={isProcessingBg}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(79,70,229,0.4)]"
+              disabled={isProcessingBg || selectedPhotos.length === 0}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all ${selectedPhotos.length > 0 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_15px_rgba(79,70,229,0.4)]' : 'bg-slate-800 text-slate-500'}`}
             >
               {isProcessingBg ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              {isProcessingBg ? `Przetwarzanie ${bgProgress.current}/${bgProgress.total}...` : '✨ Usuń tło 360°'}
+              {isProcessingBg ? `Przetwarzanie...` : `Usuń tło (${selectedPhotos.length})`}
             </button>
 
             {isEditing ? (
               <button 
                 onClick={handleSave} 
                 disabled={isSaving}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-all disabled:opacity-50"
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Zapisz
@@ -209,11 +321,21 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
             ) : (
               <button 
                 onClick={() => setIsEditing(true)} 
-                className="bg-slate-800 hover:bg-slate-700 text-white px-6 py-2.5 rounded-lg font-semibold flex items-center gap-2 transition-all border border-slate-700"
+                className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all border border-slate-700"
               >
                 <Edit2 className="w-4 h-4" /> Edytuj
               </button>
             )}
+
+            {/* Przycisk Usuń Całą Kartotekę */}
+            <button 
+              onClick={handleDeleteKartoteka} 
+              disabled={isSaving}
+              className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/20 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-all disabled:opacity-50 ml-auto xl:ml-2"
+            >
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              Usuń
+            </button>
           </div>
         </div>
 
@@ -273,36 +395,84 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
             ))}
           </div>
 
-          {/* Prawa kolumna: Galeria Zdjęć */}
+          {/* Prawa kolumna: ZARZĄDZANIE GALERIĄ */}
           <div className="lg:col-span-2 bg-slate-900 p-6 rounded-2xl border border-slate-800">
-            <h2 className="text-xl font-semibold mb-4 border-b border-slate-800 pb-2 flex items-center gap-2">
-              <ImageIcon className="w-5 h-5 text-emerald-500" /> Dokumentacja Zdjęciowa
-            </h2>
+            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <ImageIcon className="w-5 h-5 text-emerald-500" /> Dokumentacja Zdjęciowa
+              </h2>
+              <span className="text-sm text-slate-400">Wybrano: <strong className="text-indigo-400">{selectedPhotos.length}</strong></span>
+            </div>
             
             {vehicle.photos && Object.keys(vehicle.photos).length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {Object.entries(vehicle.photos).map(([stepId, url]) => (
-                  <div key={stepId} className="group relative aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center checkered-bg">
-                    {/* checkered-bg to klasa pomocnicza dla przezroczystości */}
-                    <style jsx>{`
-                      .checkered-bg {
-                        background-image: linear-gradient(45deg, #1e293b 25%, transparent 25%), linear-gradient(-45deg, #1e293b 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1e293b 75%), linear-gradient(-45deg, transparent 75%, #1e293b 75%);
-                        background-size: 20px 20px;
-                        background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-                      }
-                    `}</style>
-                    <img 
-                      src={url as string} 
-                      alt={`Zdjęcie z kroku: ${stepId}`}
-                      className="max-w-full max-h-full object-contain drop-shadow-2xl transition-transform duration-500 group-hover:scale-105"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-                      <span className="text-white text-sm font-medium bg-black/50 px-2 py-1 rounded backdrop-blur-sm">
-                        {stepId.replace('ext_', 'Zew: ').replace('_', ' ').toUpperCase()}
-                      </span>
+                {Object.entries(vehicle.photos).map(([stepId, url]) => {
+                  const isSelected = selectedPhotos.includes(stepId);
+                  const isLoading = url === 'loading';
+                  
+                  return (
+                    <div 
+                      key={stepId} 
+                      className={`group relative aspect-video bg-slate-950 rounded-xl overflow-hidden border-2 transition-all flex items-center justify-center checkered-bg ${isSelected ? 'border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.3)]' : 'border-slate-800 hover:border-slate-600'}`}
+                    >
+                      <style jsx>{`
+                        .checkered-bg {
+                          background-image: linear-gradient(45deg, #1e293b 25%, transparent 25%), linear-gradient(-45deg, #1e293b 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #1e293b 75%), linear-gradient(-45deg, transparent 75%, #1e293b 75%);
+                          background-size: 20px 20px;
+                          background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+                        }
+                      `}</style>
+                      
+                      {isLoading ? (
+                        <Loader2 className="w-8 h-8 text-emerald-500 animate-spin" />
+                      ) : (
+                        <img 
+                          src={url as string} 
+                          alt={`Zdjęcie z kroku: ${stepId}`}
+                          className="max-w-full max-h-full object-contain drop-shadow-2xl"
+                        />
+                      )}
+
+                      {!isLoading && (
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity p-2 flex flex-col justify-between">
+                          
+                          <div className="flex justify-between items-start">
+                            <button 
+                              onClick={() => togglePhotoSelection(stepId)}
+                              className="text-white p-1 hover:text-indigo-400 transition-colors drop-shadow-md"
+                              title="Zaznacz do usunięcia tła"
+                            >
+                              {isSelected ? <CheckCircle2 className="w-7 h-7 text-indigo-500 fill-white" /> : <Circle className="w-7 h-7" />}
+                            </button>
+                            
+                            <div className="flex gap-2 bg-black/60 backdrop-blur-md rounded-lg p-1 border border-white/10">
+                              <button 
+                                onClick={() => initReplacePhoto(stepId)}
+                                className="p-1.5 text-slate-300 hover:text-emerald-400 transition-colors"
+                                title="Podmień zdjęcie"
+                              >
+                                <Camera className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => handleDeletePhoto(stepId, url as string)}
+                                className="p-1.5 text-slate-300 hover:text-rose-400 transition-colors"
+                                title="Usuń na zawsze"
+                              >
+                                <Trash2 className="w-5 h-5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-center">
+                             <span className="text-white text-xs font-bold uppercase tracking-widest bg-black/70 px-3 py-1 rounded-md backdrop-blur-sm border border-white/20">
+                               {stepId.replace('ext_', '').replace('_', ' ')}
+                             </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 text-slate-500 bg-slate-950/50 rounded-xl border border-dashed border-slate-800">

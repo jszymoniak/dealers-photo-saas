@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { db, auth } from '@/lib/firebase';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { Car, Calendar, Loader2, LogOut, LayoutGrid, Building2, ExternalLink, Users, Hash, List } from 'lucide-react';
+import { Car, Calendar, Loader2, LogOut, LayoutGrid, Building2, ExternalLink, Users, Hash, List, Plus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -26,13 +26,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState<any>(null);
   
-  // Stan dla widoku (kafelki vs tabela) i flagi montowania (dla localStorage)
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [isMounted, setIsMounted] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
-    // Odczyt zapisanego widoku z pamięci przeglądarki
     const savedView = localStorage.getItem('saas_dashboard_view');
     if (savedView === 'table' || savedView === 'grid') {
       setViewMode(savedView);
@@ -70,7 +69,6 @@ export default function DashboardPage() {
       const list: Vehicle[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as Vehicle));
       
-      // Sortowanie od najnowszych
       list.sort((a, b) => {
         const dateA = a.completedAt?.seconds || 0;
         const dateB = b.completedAt?.seconds || 0;
@@ -93,11 +91,55 @@ export default function DashboardPage() {
     localStorage.setItem('saas_dashboard_view', mode);
   };
 
+  // --- TWORZENIE NOWEJ KARTOTEKI ---
+  const handleCreateRecord = async () => {
+    setIsCreating(true);
+    try {
+      const currentDealerId = userData?.role === 'superadmin' ? 'nivette' : userData?.dealerId;
+      
+      if (!currentDealerId) {
+        alert("Brak przypisanego salonu!");
+        setIsCreating(false);
+        return;
+      }
+
+      const newDocRef = doc(collection(db, 'vehicles'));
+      await setDoc(newDocRef, {
+        dealerId: currentDealerId,
+        status: 'Oczekuje',
+        brand: 'Nowy',
+        model: 'Pojazd',
+        completedAt: serverTimestamp()
+      });
+
+      router.push(`/dashboard/vehicle/${newDocRef.id}`);
+    } catch (error) {
+      console.error(error);
+      alert("Błąd podczas tworzenia kartoteki");
+      setIsCreating(false);
+    }
+  };
+
+  // --- SZYBKIE USUWANIE Z LISTY ---
+  const handleDeleteRecord = async (e: React.MouseEvent, vehicleId: string) => {
+    e.preventDefault(); // Zapobiega przejściu do detali po kliknięciu w kosz
+    e.stopPropagation();
+    
+    if (!confirm('Czy na pewno chcesz usunąć tę kartotekę?')) return;
+
+    try {
+      await deleteDoc(doc(db, 'vehicles', vehicleId));
+      setVehicles(prev => prev.filter(v => v.id !== vehicleId));
+    } catch (error) {
+      console.error(error);
+      alert("Nie udało się usunąć kartoteki.");
+    }
+  };
+
   if (loading || !isMounted) return <div className="min-h-screen bg-slate-900 flex justify-center items-center"><Loader2 className="w-8 h-8 animate-spin text-emerald-400" /></div>;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Górna belka nawigacyjna */}
       <header className="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between sticky top-0 z-50 shadow-md">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-emerald-500/10 rounded-lg">
@@ -129,7 +171,6 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* Główny kontener */}
       <main className="p-6 md:p-12 max-w-7xl mx-auto space-y-8">
         
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
@@ -139,29 +180,30 @@ export default function DashboardPage() {
           </div>
           
           <div className="flex items-center gap-4">
-            {/* Przełącznik widoków */}
             <div className="flex gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg">
               <button 
                 onClick={() => toggleViewMode('grid')}
                 className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-slate-800 text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-                title="Widok kafelkowy"
               >
                 <LayoutGrid className="w-4 h-4" />
               </button>
               <button 
                 onClick={() => toggleViewMode('table')}
                 className={`p-2 rounded-md transition-colors ${viewMode === 'table' ? 'bg-slate-800 text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-                title="Widok tabelaryczny"
               >
                 <List className="w-4 h-4" />
               </button>
             </div>
 
-            {userData?.role === 'superadmin' && (
-               <Link href="/session/TEST-VIN-456" className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-all">
-                 Aparat (Nowe Auto) <ExternalLink className="w-4 h-4" />
-               </Link>
-            )}
+            {/* ZMIANA: Uniwersalny przycisk + Nowa Kartoteka */}
+            <button 
+              onClick={handleCreateRecord}
+              disabled={isCreating}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold flex items-center gap-2 transition-all disabled:opacity-50"
+            >
+              {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-5 h-5" />}
+              Nowa Kartoteka
+            </button>
           </div>
         </div>
 
@@ -171,7 +213,6 @@ export default function DashboardPage() {
             <p>Brak zrealizowanych sesji zdjęciowych.</p>
           </div>
         ) : viewMode === 'grid' ? (
-          // WIDOK KAFELKOWY
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {vehicles.map((vehicle) => {
               const firstPhotoUrl = vehicle.photos ? Object.values(vehicle.photos)[0] : null;
@@ -180,15 +221,24 @@ export default function DashboardPage() {
                 <Link 
                   href={`/dashboard/vehicle/${vehicle.id}`} 
                   key={vehicle.id} 
-                  className="block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden hover:border-emerald-500/50 hover:shadow-[0_0_20px_rgba(16,185,129,0.15)] transition-all group cursor-pointer"
+                  className="block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden hover:border-emerald-500/50 hover:shadow-[0_0_20px_rgba(16,185,129,0.15)] transition-all group cursor-pointer relative"
                 >
+                  {/* Przycisk usuwania w kafelku */}
+                  <button 
+                    onClick={(e) => handleDeleteRecord(e, vehicle.id)}
+                    className="absolute top-3 left-3 z-20 p-2 bg-black/60 hover:bg-rose-500/80 backdrop-blur-md rounded-full text-white/50 hover:text-white transition-colors border border-white/10 opacity-0 group-hover:opacity-100"
+                    title="Usuń kartotekę"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+
                   <div className="aspect-video bg-slate-950 relative overflow-hidden flex items-center justify-center">
                     {firstPhotoUrl ? (
                       <img src={firstPhotoUrl} alt="Vehicle thumbnail" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     ) : (
                       <Car className="w-10 h-10 text-slate-800" />
                     )}
-                    <div className="absolute top-3 right-3">
+                    <div className="absolute top-3 right-3 z-10">
                       <span className="bg-black/60 backdrop-blur-md text-white text-[10px] uppercase font-bold px-2.5 py-1 rounded-full border border-white/10">
                         {vehicle.status}
                       </span>
@@ -225,7 +275,6 @@ export default function DashboardPage() {
             })}
           </div>
         ) : (
-          // WIDOK TABELARYCZNY (Zainspirowany ServiceFlow)
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm whitespace-nowrap">
@@ -235,7 +284,7 @@ export default function DashboardPage() {
                     <th className="px-6 py-4">Pojazd</th>
                     <th className="px-6 py-4">Dane Rejestracyjne</th>
                     <th className="px-6 py-4">Oddział / Data</th>
-                    <th className="px-6 py-4 text-right">Status</th>
+                    <th className="px-6 py-4 text-right">Akcje</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50 text-slate-300">
@@ -248,7 +297,7 @@ export default function DashboardPage() {
                         className="hover:bg-slate-800/50 cursor-pointer transition-colors group"
                       >
                         <td className="px-6 py-3">
-                          <div className="w-20 h-14 bg-slate-950 rounded border border-slate-800 overflow-hidden group-hover:border-emerald-500/30 transition-colors flex items-center justify-center">
+                          <div className="w-20 h-14 bg-slate-950 rounded border border-slate-800 overflow-hidden group-hover:border-emerald-500/30 transition-colors flex items-center justify-center relative">
                             {firstPhotoUrl ? (
                               <img src={firstPhotoUrl} alt="Thumb" className="w-full h-full object-cover" />
                             ) : (
@@ -280,9 +329,19 @@ export default function DashboardPage() {
                           </div>
                         </td>
                         <td className="px-6 py-3 text-right">
-                          <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] uppercase font-bold px-2.5 py-1 rounded-full inline-block">
-                            {vehicle.status}
-                          </span>
+                          <div className="flex items-center justify-end gap-3">
+                            <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] uppercase font-bold px-2.5 py-1 rounded-full inline-block">
+                              {vehicle.status}
+                            </span>
+                            {/* Przycisk usuwania w tabeli */}
+                            <button 
+                              onClick={(e) => handleDeleteRecord(e, vehicle.id)}
+                              className="p-2 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                              title="Usuń kartotekę"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )
