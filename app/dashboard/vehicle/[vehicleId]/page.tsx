@@ -5,8 +5,16 @@ import { useRouter } from 'next/navigation';
 import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL, deleteObject, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase';
-import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles, Trash2, Camera, CheckCircle2, Circle, Eye, X, MoveHorizontal } from 'lucide-react';
+import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles, Trash2, Camera, CheckCircle2, Circle, Eye, X, MoveHorizontal, ImagePlus } from 'lucide-react';
 import Link from 'next/link';
+
+const PRESET_PROMPTS = [
+  { id: 'custom', label: '✍️ Wpisz własny...', value: '' },
+  { id: 'studio-light', label: 'Jasne Studio', value: 'Profesjonalne jasne studio motoryzacyjne, biała epoksydowa podłoga, miękkie górne oświetlenie softbox, fotorealistyczne' },
+  { id: 'studio-dark', label: 'Ciemne Studio Premium', value: 'Ciemne ekskluzywne studio, czarna lśniąca podłoga, punktowe oświetlenie ledowe akcentujące sylwetkę, 8k resolution' },
+  { id: 'outdoor-modern', label: 'Nowoczesny Podjazd', value: 'Nowoczesny dom jednorodzinny w tle, betonowy podjazd z płyt architektonicznych, słoneczny dzień, błękitne niebo' },
+  { id: 'outdoor-industrial', label: 'Loft / Industrial', value: 'Wnętrze starego industrialnego magazynu, ściany z czerwonej cegły, wylany beton, ciepłe światło z dużych okien' }
+];
 
 const ROTATION_ORDER = ['ext_front', 'ext_front_right', 'ext_right', 'ext_back_right', 'ext_back', 'ext_back_left', 'ext_left', 'ext_front_left'];
 
@@ -30,9 +38,13 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
   const [bgProgress, setBgProgress] = useState({ current: 0, total: 0, status: '' });
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   
+  // NOWE: Stany dla generatora AI
+  const [bgPrompt, setBgPrompt] = useState(PRESET_PROMPTS[1].value);
+  const [isGeneratingBg, setIsGeneratingBg] = useState(false);
+  
   // Stany dla 360° i teł
   const [show360, setShow360] = useState(false);
-  const [currentFrame, setCurrentFrame] = useState(0); // Wracamy do pełnych liczb całkowitych (0-7)
+  const [currentFrame, setCurrentFrame] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [activeBg, setActiveBg] = useState(BACKGROUNDS[0]);
   const dragStartX = useRef(0);
@@ -139,7 +151,6 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
 
   const available360Photos = ROTATION_ORDER.map(key => vehicle?.photos?.[key]).filter(Boolean);
 
-  // --- LOGIKA TWARDEGO OBROTU (BEZ PRZENIKANIA) ---
   const handlePointerDown = (e: React.PointerEvent) => {
     setIsDragging(true);
     dragStartX.current = e.clientX;
@@ -148,7 +159,7 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!isDragging || available360Photos.length === 0) return;
     
-    const pixelsPerFrame = 40; // Jak daleko trzeba przeciągnąć by zmienić klatkę
+    const pixelsPerFrame = 40; 
     const deltaX = e.clientX - dragStartX.current;
     
     if (Math.abs(deltaX) > pixelsPerFrame) {
@@ -159,7 +170,7 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
         if (next < 0) next = available360Photos.length - 1;
         return next;
       });
-      dragStartX.current = e.clientX; // Reset punktu kontrolnego
+      dragStartX.current = e.clientX; 
     }
   }, [isDragging, available360Photos.length]);
 
@@ -211,7 +222,6 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
           >
             <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-[20%] w-[80%] max-w-3xl h-32 blur-3xl rounded-[100%] pointer-events-none transition-colors duration-700 ${activeBg.id === 'light-studio' ? 'bg-black/20' : 'bg-black/60'}`}></div>
 
-            {/* Renderujemy tylko jedną aktywną klatkę */}
             <img 
               src={available360Photos[currentFrame]} 
               alt="Widok 360"
@@ -227,7 +237,7 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
         </div>
       )}
 
-      {/* --- RESZTA STRONY (BEZ ZMIAN) --- */}
+      {/* --- RESZTA STRONY --- */}
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 bg-slate-900 p-6 rounded-2xl border border-slate-800">
           <div>
@@ -275,9 +285,54 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
           </div>
 
           <div className="lg:col-span-2 bg-slate-900 p-6 rounded-2xl border border-slate-800">
-            <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-2">
-              <h2 className="text-xl font-semibold flex items-center gap-2"><ImageIcon className="w-5 h-5 text-emerald-500" /> Zdjęcia</h2>
-              <span className="text-sm text-slate-400">Wybrano: <strong className="text-indigo-400">{selectedPhotos.length}</strong></span>
+            {/* ZMODYFIKOWANY NAGŁÓWEK GALERII */}
+            <div className="flex flex-col mb-6 gap-4 border-b border-slate-800 pb-5">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h2 className="text-xl font-semibold flex items-center gap-2">
+                    <ImageIcon className="w-5 h-5 text-emerald-500" /> Dokumentacja Zdjęciowa
+                  </h2>
+                  <span className="text-sm text-slate-400 mt-1 block">Wybrano do edycji: <strong className="text-indigo-400">{selectedPhotos.length}</strong></span>
+                </div>
+              </div>
+
+              {/* KOKPIT GENERATORA TŁA AI */}
+              <div className="w-full flex flex-col gap-3 p-4 bg-slate-950/60 rounded-xl border border-indigo-500/20 shadow-[inset_0_0_20px_rgba(79,70,229,0.05)]">
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles className="w-4 h-4 text-indigo-400" />
+                  <label className="text-sm text-indigo-300 font-bold uppercase tracking-wider">
+                    Inteligentne Tło AI (Vertex / Inpainting)
+                  </label>
+                </div>
+                
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <select 
+                    onChange={(e) => setBgPrompt(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:border-indigo-500 outline-none w-full sm:w-1/3 cursor-pointer"
+                  >
+                    {PRESET_PROMPTS.map(preset => (
+                      <option key={preset.id} value={preset.value}>{preset.label}</option>
+                    ))}
+                  </select>
+
+                  <input 
+                    type="text" 
+                    value={bgPrompt}
+                    onChange={(e) => setBgPrompt(e.target.value)}
+                    placeholder="Wybierz styl z listy lub opisz własną scenerię..."
+                    className="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:border-indigo-500 outline-none w-full flex-1"
+                  />
+                  
+                  <button 
+                    disabled={selectedPhotos.length === 0 || isGeneratingBg}
+                    className={`px-5 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all whitespace-nowrap ${selectedPhotos.length > 0 ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)]' : 'bg-slate-800 text-slate-500'}`}
+                  >
+                    {isGeneratingBg ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
+                    Podstaw tło AI
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 font-medium">Zaznacz kółkiem miniatury poniżej, a następnie wygeneruj im nowe tło zachowując oryginalne cienie pod kołami.</p>
+              </div>
             </div>
             
             {vehicle.photos && Object.keys(vehicle.photos).length > 0 ? (
