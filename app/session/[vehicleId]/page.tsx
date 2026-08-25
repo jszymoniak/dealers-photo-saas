@@ -98,15 +98,43 @@ export default function PhotoSessionPage({ params }: { params: Promise<{ vehicle
     }
   };
 
-  const capturePhoto = () => {
+const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      
+      // --- WYMUSZENIE FORMATU 16:9 ---
+      const targetRatio = 16 / 9;
+      const videoWidth = video.videoWidth;
+      const videoHeight = video.videoHeight;
+      const videoRatio = videoWidth / videoHeight;
+
+      let sourceX = 0;
+      let sourceY = 0;
+      let sourceWidth = videoWidth;
+      let sourceHeight = videoHeight;
+
+      // Jeśli wideo jest pionowe (lub nie-16:9), wyliczamy ramkę do wycięcia środka
+      if (videoRatio < targetRatio) {
+         // Wideo jest węższe (pionowe). Przycinamy górę i dół.
+         sourceHeight = sourceWidth / targetRatio;
+         sourceY = (videoHeight - sourceHeight) / 2;
+      } else if (videoRatio > targetRatio) {
+         // Wideo jest szersze. Przycinamy boki.
+         sourceWidth = sourceHeight * targetRatio;
+         sourceX = (videoWidth - sourceWidth) / 2;
+      }
+
+      // Ustawiamy wymiary płótna (canvas) na idealne 16:9
+      canvas.width = sourceWidth;
+      canvas.height = sourceHeight;
+      
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Kopiujemy tylko wyliczony, poziomy środek z kamery
+        ctx.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
+        
+        // Kompresja do JPEG (jakość 80% to idealny balans między ostrością a wagą)
         const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
         
         const stepId = STEPS[currentStep].id;
