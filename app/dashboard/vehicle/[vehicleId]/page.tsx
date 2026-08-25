@@ -5,12 +5,11 @@ import { useRouter } from 'next/navigation';
 import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { ref, uploadString, getDownloadURL, deleteObject, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase';
-import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles, Trash2, Camera, CheckCircle2, Circle, Eye, X, MoveHorizontal, ImagePlus } from 'lucide-react';
+import { ArrowLeft, Save, Edit2, Car, Calendar, Hash, Image as ImageIcon, Loader2, Sparkles, Trash2, Camera, CheckCircle2, Circle, Eye, X, MoveHorizontal } from 'lucide-react';
 import Link from 'next/link';
 
 const ROTATION_ORDER = ['ext_front', 'ext_front_right', 'ext_right', 'ext_back_right', 'ext_back', 'ext_back_left', 'ext_left', 'ext_front_left'];
 
-// Baza wirtualnych teł
 const BACKGROUNDS = [
   { id: 'dark-studio', name: 'Ciemne Studio', css: 'bg-gradient-to-b from-slate-900 via-slate-950 to-black' },
   { id: 'light-studio', name: 'Jasny Showroom', css: 'bg-gradient-to-b from-slate-100 via-white to-slate-200' },
@@ -31,13 +30,12 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
   const [bgProgress, setBgProgress] = useState({ current: 0, total: 0, status: '' });
   const [selectedPhotos, setSelectedPhotos] = useState<string[]>([]);
   
-  // Stany dla płynnego 360° i teł
+  // Stany dla 360° i teł
   const [show360, setShow360] = useState(false);
-  const [exactFrame, setExactFrame] = useState(0); // Przechowuje ułamek, np. 1.5
+  const [currentFrame, setCurrentFrame] = useState(0); // Wracamy do pełnych liczb całkowitych (0-7)
   const [isDragging, setIsDragging] = useState(false);
   const [activeBg, setActiveBg] = useState(BACKGROUNDS[0]);
   const dragStartX = useRef(0);
-  const dragStartFrame = useRef(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeStepToReplace, setActiveStepToReplace] = useState<string | null>(null);
@@ -141,39 +139,31 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
 
   const available360Photos = ROTATION_ORDER.map(key => vehicle?.photos?.[key]).filter(Boolean);
 
-  // --- ZAAWANSOWANA LOGIKA PŁYNNEGO OBROTU (CROSSFADING) ---
+  // --- LOGIKA TWARDEGO OBROTU (BEZ PRZENIKANIA) ---
   const handlePointerDown = (e: React.PointerEvent) => {
     setIsDragging(true);
     dragStartX.current = e.clientX;
-    dragStartFrame.current = exactFrame;
   };
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (!isDragging || available360Photos.length === 0) return;
     
-    // Czułość: ile pikseli trzeba przesunąć, by zmienić pełną klatkę (zmniejszenie wartości zwiększa szybkość obrotu)
-    const pixelsPerFrame = 80; 
+    const pixelsPerFrame = 40; // Jak daleko trzeba przeciągnąć by zmienić klatkę
     const deltaX = e.clientX - dragStartX.current;
     
-    // Odwracamy kierunek (deltaX * -1), aby obrót był naturalny pod palcem
-    const frameDelta = (deltaX * -1) / pixelsPerFrame;
-    
-    let newExactFrame = dragStartFrame.current + frameDelta;
-    const totalFrames = available360Photos.length;
-
-    // Zapętlanie wartości (jeśli zejdziemy poniżej 0 lub powyżej max)
-    while (newExactFrame < 0) newExactFrame += totalFrames;
-    while (newExactFrame >= totalFrames) newExactFrame -= totalFrames;
-
-    setExactFrame(newExactFrame);
+    if (Math.abs(deltaX) > pixelsPerFrame) {
+      const direction = deltaX > 0 ? -1 : 1; 
+      setCurrentFrame(prev => {
+        let next = prev + direction;
+        if (next >= available360Photos.length) next = 0;
+        if (next < 0) next = available360Photos.length - 1;
+        return next;
+      });
+      dragStartX.current = e.clientX; // Reset punktu kontrolnego
+    }
   }, [isDragging, available360Photos.length]);
 
   const handlePointerUp = () => setIsDragging(false);
-
-  // Wyliczanie klatek do przenikania (Crossfade)
-  const baseIndex = Math.floor(exactFrame);
-  const nextIndex = (baseIndex + 1) % available360Photos.length;
-  const progress = exactFrame - baseIndex; // wartość od 0.0 do 0.99
 
   if (isLoading) return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-emerald-400"><Loader2 className="w-10 h-10 animate-spin mb-4" /></div>;
   if (!vehicle) return <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center"><h1 className="text-2xl font-bold mb-4">Nie znaleziono pojazdu</h1><Link href="/dashboard" className="text-emerald-400">Wróć</Link></div>;
@@ -185,10 +175,8 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
       {/* --- MODAL WIRTUALNEJ OBROTNICY 360 --- */}
       {show360 && available360Photos.length > 0 && (
         <div className="fixed inset-0 z-50 flex flex-col">
-          {/* Tło nakładane na cały ekran na podstawie wyboru */}
           <div className={`absolute inset-0 transition-colors duration-700 ${activeBg.css}`}></div>
 
-          {/* Header 360 */}
           <div className="p-6 flex justify-between items-center z-10 relative">
             <div>
               <h2 className={`text-2xl font-bold flex items-center gap-2 ${activeBg.id === 'light-studio' ? 'text-slate-900' : 'text-white'}`}>
@@ -197,7 +185,6 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
               <p className={`text-sm ${activeBg.id === 'light-studio' ? 'text-slate-600' : 'text-slate-400'}`}>{vehicle.brand} {vehicle.model}</p>
             </div>
             
-            {/* Przełącznik Wirtualnego Tła */}
             <div className="flex gap-2 bg-black/20 backdrop-blur-md p-1.5 rounded-xl border border-white/10 hidden md:flex">
                {BACKGROUNDS.map(bg => (
                  <button 
@@ -215,7 +202,6 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
             </button>
           </div>
 
-          {/* Kontener Odtwarzacza */}
           <div 
             className="flex-1 relative overflow-hidden select-none touch-none flex items-center justify-center cursor-grab active:cursor-grabbing z-10"
             onPointerDown={handlePointerDown}
@@ -223,26 +209,16 @@ export default function VehicleDetailsPage({ params }: { params: Promise<{ vehic
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerUp}
           >
-            {/* Wirtualna "podłoga" z cieniem pod autem */}
             <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-[20%] w-[80%] max-w-3xl h-32 blur-3xl rounded-[100%] pointer-events-none transition-colors duration-700 ${activeBg.id === 'light-studio' ? 'bg-black/20' : 'bg-black/60'}`}></div>
 
-            {/* Renderowanie 2 obrazów jednocześnie (Crossfade) */}
+            {/* Renderujemy tylko jedną aktywną klatkę */}
             <img 
-              src={available360Photos[baseIndex]} 
+              src={available360Photos[currentFrame]} 
               alt="Widok 360"
-              className="absolute z-10 w-full max-w-5xl max-h-[70vh] object-contain pointer-events-none drop-shadow-2xl"
-              style={{ opacity: 1 - progress }}
-              draggable="false"
-            />
-            <img 
-              src={available360Photos[nextIndex]} 
-              alt="Widok 360 - płynne przejście"
-              className="absolute z-10 w-full max-w-5xl max-h-[70vh] object-contain pointer-events-none drop-shadow-2xl"
-              style={{ opacity: progress }}
+              className="relative z-10 w-full max-w-5xl max-h-[70vh] object-contain pointer-events-none drop-shadow-2xl"
               draggable="false"
             />
 
-            {/* Wskaźnik przeciągania */}
             <div className={`absolute bottom-12 left-1/2 -translate-x-1/2 flex flex-col items-center animate-pulse opacity-50 pointer-events-none ${activeBg.id === 'light-studio' ? 'text-slate-800' : 'text-white'}`}>
               <MoveHorizontal className="w-8 h-8 mb-2" />
               <span className="text-sm font-bold tracking-widest uppercase">Przesuń, aby obrócić</span>
